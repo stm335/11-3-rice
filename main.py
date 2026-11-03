@@ -20,7 +20,9 @@ st.title("🍱 급식 규칙 찾기")
 st.caption("송탄고 중식 메뉴의 동시 출현 패턴과 연관 규칙을 분석합니다.")
 
 
+# --------------------------------------------------
 # 데이터 불러오기 및 전처리
+# --------------------------------------------------
 @st.cache_data
 def load_data():
     df = pd.read_csv(DATA_URL, encoding="utf-8-sig")
@@ -52,7 +54,9 @@ def load_data():
     return df
 
 
+# --------------------------------------------------
 # 연관 규칙 분석
+# --------------------------------------------------
 def make_rules(df):
     transactions = df["메뉴목록"].tolist()
     total_days = len(transactions)
@@ -116,7 +120,9 @@ def make_rules(df):
     return rules_df, menu_counts, pair_counts
 
 
+# --------------------------------------------------
 # 데이터 실행
+# --------------------------------------------------
 try:
     data = load_data()
     rules_df, menu_counts, pair_counts = make_rules(data)
@@ -127,7 +133,9 @@ except Exception as error:
     st.stop()
 
 
+# --------------------------------------------------
 # 요약 정보
+# --------------------------------------------------
 col1, col2, col3 = st.columns(3)
 
 col1.metric("급식 일수", f"{len(data):,}일")
@@ -137,14 +145,16 @@ col3.metric("함께 나온 메뉴 쌍 수", f"{len(pair_counts):,}쌍")
 st.divider()
 
 
+# --------------------------------------------------
 # 연관 규칙 표
+# --------------------------------------------------
 st.subheader("📋 메뉴 연관 규칙")
 
 control_col1, control_col2 = st.columns([2, 1])
 
 with control_col1:
     selected_menu = st.selectbox(
-        "메뉴 선택",
+        "메뉴 좁혀 보기",
         options=["전체 메뉴"] + sorted(menu_counts.keys()),
         index=0
     )
@@ -157,7 +167,17 @@ with control_col2:
     )
 
 
-# 정렬 기준 설정
+# 최소 동시 일수 슬라이더
+min_together = st.slider(
+    "최소 동시 일수",
+    min_value=1,
+    max_value=10,
+    value=1,
+    step=1
+)
+
+
+# 정렬 기준
 sort_columns = {
     "향상도 순": ["향상도", "신뢰도", "동시"],
     "신뢰도 순": ["신뢰도", "향상도", "동시"],
@@ -166,21 +186,33 @@ sort_columns = {
 
 filtered_rules = rules_df.copy()
 
-# 선택한 메뉴가 포함된 규칙만 표시
+# 메뉴 필터링
 if selected_menu != "전체 메뉴":
     filtered_rules = filtered_rules[
         (filtered_rules["조건"] == selected_menu)
         | (filtered_rules["결과"] == selected_menu)
     ]
 
-# 내림차순 정렬
+# 최소 동시 일수 필터링
+filtered_rules = filtered_rules[
+    filtered_rules["동시"] >= min_together
+]
+
+# 정렬
 filtered_rules = filtered_rules.sort_values(
     by=sort_columns[sort_option],
     ascending=[False, False, False]
 ).reset_index(drop=True)
 
-st.caption(f"표시 규칙: {len(filtered_rules):,}개")
 
+# 남은 규칙 개수 표시
+st.write(
+    f"**최소 동시 {min_together}일 이상: "
+    f"{len(filtered_rules):,}개 규칙**"
+)
+
+
+# 표 출력
 if filtered_rules.empty:
     st.info("조건에 맞는 연관 규칙이 없습니다.")
 
@@ -206,7 +238,9 @@ else:
     )
 
 
+# --------------------------------------------------
 # 향상도 상위 10개 그래프
+# --------------------------------------------------
 st.divider()
 st.subheader("📊 향상도 상위 10개 규칙")
 
@@ -266,7 +300,88 @@ else:
     )
 
 
+# --------------------------------------------------
+# 함께 나온 적 없는 짝
+# --------------------------------------------------
+st.divider()
+st.subheader("🚫 함께 나온 적 없는 짝")
+
+st.caption(
+    "선택한 메뉴와 한 번도 같은 날 나오지 않았으며, "
+    "혼자서는 10일 이상 등장한 메뉴를 찾습니다."
+)
+
+# 위의 메뉴 좁혀 보기와 별개의 선택 메뉴
+negative_menu = st.selectbox(
+    "함께 나온 적 없는 짝 찾기 - 메뉴 선택",
+    options=sorted(menu_counts.keys()),
+    index=0,
+    key="negative_menu_select"
+)
+
+# 선택 메뉴의 등장 일수
+selected_menu_days = menu_counts[negative_menu]
+
+st.metric(
+    f"'{negative_menu}'이(가) 나온 날",
+    f"{selected_menu_days:,}일"
+)
+
+# 선택 메뉴와 함께 나온 적이 있는 메뉴 목록
+appeared_with = set()
+
+for menus in data["메뉴목록"]:
+    if negative_menu in menus:
+        appeared_with.update(menus)
+
+# 자기 자신 제외
+appeared_with.discard(negative_menu)
+
+# 함께 나온 적 없는 메뉴 중 10일 이상 등장한 메뉴
+never_together = []
+
+for menu, count in menu_counts.items():
+    if (
+        menu != negative_menu
+        and menu not in appeared_with
+        and count >= 10
+    ):
+        never_together.append({
+            "메뉴": menu,
+            "나온 날": count
+        })
+
+never_df = pd.DataFrame(
+    never_together,
+    columns=["메뉴", "나온 날"]
+)
+
+if never_df.empty:
+    st.info(
+        "선택한 메뉴와 한 번도 함께 나오지 않았고 "
+        "10일 이상 등장한 메뉴가 없습니다."
+    )
+
+else:
+    never_df = never_df.sort_values(
+        by="나온 날",
+        ascending=False
+    ).reset_index(drop=True)
+
+    st.write(
+        f"**함께 나온 적 없는 메뉴: {len(never_df):,}개**"
+    )
+
+    st.dataframe(
+        never_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# --------------------------------------------------
 # 지표 설명
+# --------------------------------------------------
 with st.expander("📖 지지도·신뢰도·향상도란?"):
 
     st.markdown(
@@ -287,3 +402,4 @@ with st.expander("📖 지지도·신뢰도·향상도란?"):
     )
 
 st.caption("데이터 출처: 송탄고 중식 급식 CSV")
+
